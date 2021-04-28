@@ -23,7 +23,7 @@ include_directories(${GDAL_INCLUDE_DIR})
 find_package(OpenCV HINTS "${OPENCV_DIR}" REQUIRED)
 
 # Only link with required opencv modules.
-set(OpenCV_LIBS opencv_core opencv_imgproc)
+set(OpenCV_LIBS opencv_core opencv_imgproc opencv_highgui)
 
 # Add the PCL, Eigen and OpenCV include dirs.
 # Necessary since the PCL_INCLUDE_DIR variable set by find_package is broken.)
