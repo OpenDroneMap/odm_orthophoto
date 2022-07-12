@@ -94,7 +94,7 @@ private:
     template <typename T>
     void finalizeAlphaBand();
 
-    void saveTIFF(const std::string &filename, GDALDataType dataType);
+    void saveTIFF(const std::string &filename, GDALDataType dataType, const Bounds &bounds);
     
     /*!
       * \brief Renders a triangle into the ortho photo.
@@ -188,6 +188,9 @@ private:
     int currentBandIndex;
 
     cv::Mat         depth_;             /**< The depth of the ortho photo as an OpenCV matrix, CV_32F. */
+
+    std::string a_srs_;                   /**< The spatial reference system of the ortho photo. */
+    double offset_x_, offset_y_;                  /**< The offset of the ortho photo. */
 };
 
 /*!

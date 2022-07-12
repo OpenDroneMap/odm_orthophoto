@@ -19,6 +19,9 @@ OdmOrthoPhoto::OdmOrthoPhoto()
 
     alphaBand = nullptr;
     currentBandIndex = 0;
+    a_srs_ = "";
+    offset_x_ = 0.0;
+    offset_y_ = 0.0;
 }
 
 OdmOrthoPhoto::~OdmOrthoPhoto()
@@ -160,6 +163,30 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
             outputCornerFile_ = std::string(argv[argIndex]);
             log_ << "Writing corners to: " << outputCornerFile_ << "\n";
         }
+        else if (argument == "-a_srs")
+        {
+            argIndex++;
+            if (argIndex >= argc)
+            {
+                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            }
+            a_srs_ = std::string(argv[argIndex]);
+            log_ << "Setting a_srs to: " << a_srs_ << "\n";
+        }
+        else if (argument == "-offsets")
+        {
+            argIndex += 2;
+            if (argIndex >= argc)
+            {
+                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 2 more input following it, but no more inputs were provided.");
+            }
+            std::stringstream ss0(argv[argIndex - 1]);
+            ss0 >> offset_x_;
+            log_ << "Setting x to: " << offset_x_ << "\n";
+            std::stringstream ss1(argv[argIndex]);
+            ss1 >> offset_y_;
+            log_ << "Setting y to: " << offset_y_ << "\n";
+        }     
         else
         {
             printHelp();
@@ -220,10 +247,16 @@ void OdmOrthoPhoto::printHelp()
     log_ << "\"-bands red,green,blue,[...]\" (optional)\n";
     log_ << "\"Naming of bands to assign color interpolation values when creating output TIFF.\n\n";
 
+    log_ << "\"-a_srs <crs>\" (optional)\n";
+    log_ << "\"The coordinate reference system of the output orthophoto.\n\n";
+
+    log_ << "\"-offsets <x> <y>\" (optional)\n";
+    log_ << "\"The offset of the output orthophoto in the output coordinate system.\n\n";
+
     log_.setIsPrintingInCout(false);
 }
 
-void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType){
+void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType, const Bounds &bounds){
     GDALAllRegister();
     GDALDriverH hDriver = GDALGetDriverByName( "GTiff" );
     if (!hDriver){
@@ -234,6 +267,27 @@ void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType)
     GDALDatasetH hDstDS = GDALCreate( hDriver, filename.c_str(), width, height,
                                       static_cast<int>(bands.size() + 1), dataType, papszOptions );
     GDALRasterBandH hBand;
+
+    
+    if (!a_srs_.empty()){
+        // Set projection
+        char *pszSRS_WKT = NULL;
+        OGRSpatialReference oSRS;
+        oSRS.SetFromUserInput(a_srs_.c_str());
+        oSRS.exportToWkt(&pszSRS_WKT);
+        GDALSetProjection(hDstDS, pszSRS_WKT);
+        CPLFree(pszSRS_WKT);
+
+        // Set geotransform
+        double adfGeoTransform[6];
+        adfGeoTransform[0] = offset_x_ + static_cast<double>(bounds.xMin);
+        adfGeoTransform[1] = 1.0 / static_cast<double>(resolution_);
+        adfGeoTransform[2] = 0;
+        adfGeoTransform[3] = offset_y_ + static_cast<double>(bounds.yMax);
+        adfGeoTransform[4] = 0;
+        adfGeoTransform[5] = -1.0 / static_cast<double>(resolution_);
+        GDALSetGeoTransform(hDstDS, adfGeoTransform);
+    }
 
     // Bands
     size_t i = 0;
@@ -367,6 +421,17 @@ void OdmOrthoPhoto::createOrthoPhoto()
         log_ << "Model bounds x : " << b.xMin << " -> " << b.xMax << '\n';
         log_ << "Model bounds y : " << b.yMin << " -> " << b.yMax << '\n';
 
+        float xDiff = b.xMax - b.xMin;
+        float yDiff = b.yMax - b.yMin;
+
+        // The resolution necessary to fit the area with the given resolution.
+        height = static_cast<int>(std::ceil(resolution_*yDiff));
+        width = static_cast<int>(std::ceil(resolution_*xDiff));
+
+        // Update the bounds to match the resolution.
+        b.xMax = b.xMin + width/resolution_;
+        b.yMin = b.yMax - height/resolution_;
+
         if (primary){
             bounds = b;
         }else{
@@ -380,13 +445,7 @@ void OdmOrthoPhoto::createOrthoPhoto()
         }
 
         // The size of the area.
-        float xDiff = bounds.xMax - bounds.xMin;
-        float yDiff = bounds.yMax - bounds.yMin;
         log_ << "Model area : " << xDiff*yDiff << "m2\n";
-
-        // The resolution necessary to fit the area with the given resolution.
-        height = static_cast<int>(std::ceil(resolution_*yDiff));
-        width = static_cast<int>(std::ceil(resolution_*xDiff));
 
         depth_ = cv::Mat::zeros(height, width, CV_32F) - std::numeric_limits<float>::infinity();
         log_ << "Model resolution, width x height : " << width << "x" << height << '\n';
@@ -591,11 +650,11 @@ void OdmOrthoPhoto::createOrthoPhoto()
     log_ << "Writing ortho photo to " << outputFile_ << "\n";
 
     if (textureDepth == CV_8U){
-        saveTIFF(outputFile_, GDT_Byte);
+        saveTIFF(outputFile_, GDT_Byte, bounds);
     }else if (textureDepth == CV_16U){
-        saveTIFF(outputFile_, GDT_UInt16);
+        saveTIFF(outputFile_, GDT_UInt16, bounds);
     }else if (textureDepth == CV_32F){
-        saveTIFF(outputFile_, GDT_Float32);
+        saveTIFF(outputFile_, GDT_Float32, bounds);
     }else{
         std::cerr << "Unsupported bit depth value: " << textureDepth;
         exit(1);
