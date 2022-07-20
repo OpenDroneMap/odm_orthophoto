@@ -41,13 +41,23 @@ struct Bounds{
     }
 };
 
-struct PointXYZ{
+typedef Eigen::Vector3f PointXYZ;
+typedef Eigen::Vector2f Tex2D;
 
+struct Face{
+    PointXYZ v1;
+    PointXYZ v2;
+    PointXYZ v3;
+    Tex2D t1;
+    Tex2D t2;
+    Tex2D t3;
 };
 
 struct TextureMesh{
-    std::vector<Eigen::Vector3f> vertices;
+    std::vector<PointXYZ> vertices;
+    std::vector<Tex2D> uvs;
     std::unordered_map<std::string, cv::Mat> materials;
+    std::unordered_map<std::string, std::vector<Face> > faces;
 
 };
 
@@ -144,7 +154,7 @@ private:
     //void getBarycentricCoordinates(PointXYZ v1, PointXYZ v2, PointXYZ v3, float x, float y, float &l1, float &l2, float &l3) const;
 
     //bool isSliverPolygon(PointXYZ v1, PointXYZ v2, PointXYZ v3) const;
-    bool loadObjFile(std::string inputFile, TextureMesh &mesh);
+    void loadObjFile(std::string inputFile, TextureMesh &mesh);
 
     Logger          log_;               /**< Logging object. */
 
