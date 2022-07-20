@@ -1,7 +1,6 @@
 #include <math.h>
 #include <sstream>
 #include <fstream>
-#include <Eigen/StdVector>
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -158,7 +157,6 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
                 throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             }
             outputCornerFile_ = std::string(argv[argIndex]);
-            log_ << "Writing corners to: " << outputCornerFile_ << "\n";
         }
         else
         {
@@ -293,10 +291,12 @@ void OdmOrthoPhoto::initBands(int count){
     size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
 
     // Channels
+    T initValue = maxRange<T>();
+
     for (int i = 0; i < count; i++){
         T *arr = new T[pixelCount];
         for (size_t j = 0; j < pixelCount; j++){
-            arr[j] = maxRange<T>();
+            arr[j] = initValue;
         }
         bands.push_back(static_cast<void *>(arr));
     }
@@ -344,23 +344,14 @@ void OdmOrthoPhoto::createOrthoPhoto()
     for (auto &inputFile : inputFiles){
         log_ << "Reading mesh file... " << inputFile << "\n";
 
-        std::vector<pcl::MTLReader> companions; /**< Materials (used by loadOBJFile). **/
-        pcl::TextureMesh mesh;
-        loadObjFile(inputFile, mesh, companions);
+        TextureMesh mesh;
+        loadObjFile(inputFile, mesh);
+
+
+    }} // TODO REMOVE
+
+    /*
         log_ << "Mesh file read.\n\n";
-
-        // Does the model have more than one material?
-        bool multiMaterial_ = 1 < mesh.tex_materials.size();
-        bool splitModel = false;
-
-        if(multiMaterial_)
-        {
-            // Need to check relationship between texture coordinates and faces.
-            if(!isModelOk(mesh))
-            {
-                splitModel = true;
-            }
-        }
 
         Bounds b = computeBoundsForModel(mesh);
 
@@ -410,60 +401,6 @@ void OdmOrthoPhoto::createOrthoPhoto()
         // Contains the vertices of the mesh.
         pcl::PointCloud<pcl::PointXYZ>::Ptr meshCloud (new pcl::PointCloud<pcl::PointXYZ>);
         pcl::fromPCLPointCloud2 (mesh.cloud, *meshCloud);
-
-        // Split model and make copies of vertices and texture coordinates for all faces
-        if (splitModel)
-        {
-            pcl::PointCloud<pcl::PointXYZ>::Ptr meshCloudSplit (new pcl::PointCloud<pcl::PointXYZ>);
-            std::vector<Eigen::Vector2f, Eigen::aligned_allocator<Eigen::Vector2f> > textureCoordinates = std::vector<Eigen::Vector2f, Eigen::aligned_allocator<Eigen::Vector2f> >(0);
-
-            size_t vertexIndexCount = 0;
-            for(size_t t = 0; t < mesh.tex_polygons.size(); ++t)
-            {
-                vertexIndexCount += 3 * mesh.tex_polygons[t].size();
-            }
-            textureCoordinates.reserve(vertexIndexCount);
-
-            for(size_t t = 0; t < mesh.tex_polygons.size(); ++t)
-            {
-
-                for(size_t faceIndex = 0; faceIndex < mesh.tex_polygons[t].size(); ++faceIndex)
-                {
-                    pcl::Vertices polygon = mesh.tex_polygons[t][faceIndex];
-
-                    // The index to the vertices of the polygon.
-                    size_t v1i = polygon.vertices[0];
-                    size_t v2i = polygon.vertices[1];
-                    size_t v3i = polygon.vertices[2];
-
-                    // The polygon's points.
-                    pcl::PointXYZ v1 = meshCloud->points[v1i];
-                    pcl::PointXYZ v2 = meshCloud->points[v2i];
-                    pcl::PointXYZ v3 = meshCloud->points[v3i];
-
-                    Eigen::Vector2f vt1 = mesh.tex_coordinates[0][3*faceIndex];
-                    Eigen::Vector2f vt2 = mesh.tex_coordinates[0][3*faceIndex + 1];
-                    Eigen::Vector2f vt3 = mesh.tex_coordinates[0][3*faceIndex + 2];
-
-                    meshCloudSplit->points.push_back(v1);
-                    textureCoordinates.push_back(vt1);
-                    mesh.tex_polygons[t][faceIndex].vertices[0] = vertexIndexCount;
-
-                    meshCloudSplit->points.push_back(v2);
-                    textureCoordinates.push_back(vt2);
-                    mesh.tex_polygons[t][faceIndex].vertices[1] = vertexIndexCount;
-
-                    meshCloudSplit->points.push_back(v3);
-                    textureCoordinates.push_back(vt3);
-                    mesh.tex_polygons[t][faceIndex].vertices[2] = vertexIndexCount;
-                }
-            }
-
-            mesh.tex_coordinates.clear();
-            mesh.tex_coordinates.push_back(textureCoordinates);
-
-            meshCloud = meshCloudSplit;
-        }
 
         // Creates a transformation which aligns the area for the ortho photo.
         Eigen::Transform<float, 3, Eigen::Affine> transform = getROITransform(bounds.xMin, -bounds.yMax);
@@ -1024,71 +961,83 @@ bool OdmOrthoPhoto::isSliverPolygon(pcl::PointXYZ v1, pcl::PointXYZ v2, pcl::Poi
     // Area smaller than, or equal to, floating-point epsilon.
     return std::numeric_limits<float>::epsilon() >= static_cast<float>(std::sqrt(dummyVec.dot(dummyVec))/2.0);
 }
+*/
 
-bool OdmOrthoPhoto::isModelOk(const pcl::TextureMesh &mesh)
+// Totally not compatible with all OBJ files, just a subset of those
+// that we expect as output from ODM
+bool OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
 {
-    // The number of texture coordinates in the model.
-    size_t nTextureCoordinates = 0;
-    // The number of faces in the model.
-    size_t nFaces = 0;
-    
-    for(size_t t = 0; t < mesh.tex_coordinates.size(); ++t)
-    {
-        nTextureCoordinates += mesh.tex_coordinates[t].size();
-    }
-    for(size_t t = 0; t < mesh.tex_polygons.size(); ++t)
-    {
-        nFaces += mesh.tex_polygons[t].size();
-    }
-    
-    log_ << "Number of faces in the model " << nFaces << '\n';
-    
-    return 3*nFaces == nTextureCoordinates;
-}
+    std::ifstream fin;
+    fs::path p(inputFile);
 
+    fin.open (inputFile.c_str (), std::ios::binary);
+    if (!fin.is_open()) throw OdmOrthoPhotoException("Problem reading mesh file: " + inputFile);
 
-bool OdmOrthoPhoto::loadObjFile(std::string inputFile, pcl::TextureMesh &mesh, std::vector<pcl::MTLReader> &companions)
-{
-    int data_type;
-    unsigned int data_idx;
-    int file_version;
-    int offset = 0;
-    Eigen::Vector4f origin;
-    Eigen::Quaternionf orientation;
+    std::string line;
+    while(std::getline(fin, line)){
+        size_t mtllibPos = line.find("mtllib ");
+        if (mtllibPos == 0){
+            std::string mtlFilesLine = line.substr(std::string("mtllib ").length(), std::string::npos);
+            trim(mtlFilesLine);
 
-    if (!readHeader(inputFile, mesh.cloud, origin, orientation, file_version, data_type, data_idx, offset, companions))
-    {
-        throw OdmOrthoPhotoException("Problem reading header in modelfile!\n");
-    }
+            auto mtlFiles = split(mtlFilesLine, " ");
+            for (auto &mtlFile : mtlFiles){
+                trim(mtlFile);
+                fs::path mtlRelPath = p.parent_path() / mtlFile;
 
-    std::ifstream fs;
+                if (fs::exists(mtlRelPath)) {
+                    // Parse MTL
+                    std::string mtlLine;
+                    std::ifstream mtlFin(mtlRelPath.string());
+                    if (!mtlFin.is_open()) throw OdmOrthoPhotoException("Problem reading MTL file: " + mtlFile);
 
-    fs.open (inputFile.c_str (), std::ios::binary);
-    if (!fs.is_open () || fs.fail ())
-    {
-        //PCL_ERROR ("[pcl::OBJReader::readHeader] Could not open file '%s'! Error : %s\n", file_name.c_str (), strerror(errno));
-        fs.close ();
-        log_<<"Could not read mesh from file ";
-        log_ << inputFile.c_str();
-        log_ <<"\n";
+                    std::string currentMaterial = "";
 
-        throw OdmOrthoPhotoException("Problem reading mesh from file!\n");
-    }
+                    while(std::getline(mtlFin, mtlLine)){
+                        if (mtlLine.find("newmtl") == 0){
+                            auto tokens = split(mtlLine, " ");
+                            if (tokens.size() >= 2){
+                                currentMaterial = tokens[1];
+                                log_ << "Found " << currentMaterial << "\n";
+                            }
+                        }else if (mtlLine.find("map_Kd") == 0){
+                            auto tokens = split(mtlLine, " ");
+                            if (tokens.size() >= 2){
+                                auto mapFname = tokens[1];
+                                if (mapFname.rfind(".") != std::string::npos){
+                                    fs::path matPath = p.parent_path() / mapFname;
 
-    // Seek at the given offset
-    fs.seekg (data_idx, std::ios::beg);
+                                    // Read file in memory
+                                    log_ << "Loading " << mapFname << "\n";
 
-    // Get normal_x field indices
-    int normal_x_field = -1;
-    for (std::size_t i = 0; i < mesh.cloud.fields.size (); ++i)
-    {
-        if (mesh.cloud.fields[i].name == "normal_x")
-        {
-            normal_x_field = i;
+                                    cv::Mat texture = cv::imread(matPath.string(), cv::IMREAD_ANYDEPTH | cv::IMREAD_UNCHANGED);
+
+                                    // BGR to RGB when necessary
+                                    if (texture.channels() == 3){
+                                        cv::cvtColor(texture, texture, cv::COLOR_BGR2RGB);
+                                    }
+
+                                    mesh.materials[currentMaterial] = texture;
+                                }
+                            }
+                        }
+                    }
+
+                    mtlFin.close();
+                }
+            }
+        }
+
+        if (line.rfind("v") == 0 || line.rfind("vn") == 0 || line.rfind("f") == 0){
             break;
         }
     }
 
+    fin.close();
+
+
+
+/*
     std::size_t v_idx = 0;
     std::size_t vn_idx = 0;
     std::size_t vt_idx = 0;
@@ -1206,7 +1155,7 @@ bool OdmOrthoPhoto::loadObjFile(std::string inputFile, pcl::TextureMesh &mesh, s
             }
             // Face
             if (st[0] == "f")
-            {
+            {loadObjFile
                 //We only care for vertices indices
                 pcl::Vertices face_v; face_v.vertices.resize (st.size () - 1);
                 for (std::size_t i = 1; i < st.size (); ++i)
@@ -1215,7 +1164,7 @@ bool OdmOrthoPhoto::loadObjFile(std::string inputFile, pcl::TextureMesh &mesh, s
                     sscanf (st[i].c_str (), "%d", &v);
                     v = (v < 0) ? v_idx + v : v - 1;
                     face_v.vertices[i-1] = v;
-
+loadObjFile
                     int v2, vt, vn;
                     sscanf (st[i].c_str (), "%d/%d/%d", &v2, &vt, &vn);
                     f2vt[3*(f_idx) + i-1] = vt-1;
@@ -1230,7 +1179,7 @@ bool OdmOrthoPhoto::loadObjFile(std::string inputFile, pcl::TextureMesh &mesh, s
     {
         fs.close ();
         log_<<"Unable to read file!\n";
-        throw OdmOrthoPhotoException("Unable to read file!");
+        throw OdmloadObjFileOrthoPhotoException("Unable to read file!");
     }
 
     if (vt_idx != v_idx)
@@ -1252,9 +1201,10 @@ bool OdmOrthoPhoto::loadObjFile(std::string inputFile, pcl::TextureMesh &mesh, s
     }
 
     fs.close();
-    return (0);
+    return (0);*/
 }
 
+/*
 bool OdmOrthoPhoto::readHeader (const std::string &file_name, pcl::PCLPointCloud2 &cloud,
                                 Eigen::Vector4f &origin, Eigen::Quaternionf &orientation,
                                 int &file_version, int &data_type, unsigned int &data_idx,
@@ -1313,7 +1263,8 @@ bool OdmOrthoPhoto::readHeader (const std::string &file_name, pcl::PCLPointCloud
             line = sstream.str ();
             boost::trim (line);
             boost::split (st, line, boost::is_any_of ("\t\r "), boost::token_compress_on);
-            // Ignore comments
+            // Ignore comme        log_ << "Unknown error, terminating:\n";
+        log_.print(logFile_);nts
             if (st.at (0) == "#")
                 continue;
 
@@ -1409,3 +1360,4 @@ bool OdmOrthoPhoto::readHeader (const std::string &file_name, pcl::PCLPointCloud
     fs.close ();
     return true;
 }
+*/
