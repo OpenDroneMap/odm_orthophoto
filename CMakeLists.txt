@@ -3,6 +3,13 @@ cmake_minimum_required(VERSION 2.8)
 
 set(OPENCV_DIR "OPENCV_DIR-NOTFOUND" CACHE "OPENCV_DIR" "Path to the OPENCV installation directory")
 
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE "Release" CACHE STRING
+      "Choose the type of build, options are: Debug Release
+RelWithDebInfo MinSizeRel."
+      FORCE)
+endif()
+
 # Add compiler options.
 if (NOT WIN32)
 add_definitions(-Wall -Wextra)

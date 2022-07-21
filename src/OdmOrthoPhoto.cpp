@@ -407,15 +407,15 @@ void OdmOrthoPhoto::createOrthoPhoto()
         cv::Mat texture;
 
         // Iterate over each part of the mesh (one per material).
-        for (auto it = mesh.faces.begin(); it != mesh.faces.end(); it++){
-            std::string material = it->first;
-            std::vector<Face> faces = it->second;
+        for (auto &material : mesh.materials_idx){
+            if (mesh.faces.find(material) == mesh.faces.end() || mesh.materials.find(material) == mesh.materials.end()) continue;
 
+            std::vector<Face> faces = mesh.faces[material];
             texture = mesh.materials[material];
 
             // The first material determines the bit depth
             // Init ortho photo
-            if (material == mesh.faces.begin()->first){
+            if (material == mesh.materials_idx[0]){
                 if (primary) textureDepth = texture.depth();
                 else if (textureDepth != texture.depth()){
                     // Try to convert
@@ -463,6 +463,7 @@ void OdmOrthoPhoto::createOrthoPhoto()
                 }
             }
 
+            log_ << "Rendering " << material << " ... ";
             // Iterate over each face...
             for(Face &f : faces){
                 // ... and draw it into the ortho photo.
@@ -475,7 +476,7 @@ void OdmOrthoPhoto::createOrthoPhoto()
                 }
             }
 
-            log_ << "Material " << material << " rendered.\n";
+            log_ << "done\n";
 
         }
 
@@ -925,6 +926,7 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
                             if (tokens.size() >= 2){
                                 currentMaterial = tokens[1];
                                 log_ << "Found " << currentMaterial << "\n";
+                                mesh.materials_idx.push_back(currentMaterial);
                             }
                         }else if (mtlLine.find("map_Kd ") == 0){
                             auto tokens = split(mtlLine, " ");

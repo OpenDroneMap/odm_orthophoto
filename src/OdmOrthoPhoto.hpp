@@ -65,7 +65,7 @@ struct TextureMesh{
     std::vector<Tex2D> uvs;
     std::unordered_map<std::string, cv::Mat> materials;
     std::unordered_map<std::string, std::vector<Face> > faces;
-
+    std::vector<std::string> materials_idx;
 };
 
 class OdmOrthoPhoto
