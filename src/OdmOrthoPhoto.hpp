@@ -25,13 +25,13 @@
 namespace fs = std::filesystem;
 
 struct Bounds{
-    float xMin;
-    float xMax;
-    float yMin;
-    float yMax;
+    double xMin;
+    double xMax;
+    double yMin;
+    double yMax;
 
     Bounds() : xMin(0), xMax(0), yMin(0), yMax(0) {}
-    Bounds(float xMin, float xMax, float yMin, float yMax) :
+    Bounds(double xMin, double xMax, double yMin, double yMax) :
         xMin(xMin), xMax(xMax), yMin(yMin), yMax(yMax){}
     Bounds(const Bounds &b) {
         xMin = b.xMin;
@@ -39,18 +39,25 @@ struct Bounds{
         yMin = b.yMin;
         yMax = b.yMax;
     }
+    constexpr Bounds& operator=(const Bounds& other){
+        xMin = other.xMin;
+        xMax = other.xMax;
+        yMin = other.yMin;
+        yMax = other.yMax;
+        return *this;
+    }
 };
 
-typedef Eigen::Vector3f PointXYZ;
+typedef Eigen::Vector3d PointXYZ;
 typedef Eigen::Vector2f Tex2D;
 
 struct Face{
-    PointXYZ v1;
-    PointXYZ v2;
-    PointXYZ v3;
-    Tex2D t1;
-    Tex2D t2;
-    Tex2D t3;
+    size_t v1i;
+    size_t v2i;
+    size_t v3i;
+    size_t t1i;
+    size_t t2i;
+    size_t t3i;
 };
 
 struct TextureMesh{
@@ -61,12 +68,6 @@ struct TextureMesh{
 
 };
 
-/*!
- * \brief   The OdmOrthoPhoto class is used to create an orthographic photo over a given area.
- *          The class reads an oriented textured mesh from an OBJ-file.
- *          The class uses file read from pcl.
- *          The class uses image read and write from opencv.
- */
 class OdmOrthoPhoto
 {
 public:
@@ -100,7 +101,7 @@ private:
     /*!
       * \brief Creates a transformation which aligns the area for the orthophoto.
       */
-    Eigen::Transform<float, 3, Eigen::Affine> getROITransform(float xMin, float yMin) const;
+    Eigen::Transform<double, 3, Eigen::Affine> getROITransform(double xMin, double yMin) const;
 
     template <typename T>
     void initBands(int count);
@@ -117,15 +118,9 @@ private:
       * \brief Renders a triangle into the ortho photo.
       *
       *        Pixel center defined as middle of pixel for triangle rasterisation, and in lower left corner for texture look-up.
-      *
-      * \param texture The texture of the polygon.
-      * \param polygon The polygon as athree indices relative meshCloud.
-      * \param meshCloud Contains all vertices.
-      * \param uvs Contains the texture coordinates for the active material.
-      * \param faceIndex The index of the face.
       */
-    //template <typename T>
-    //void drawTexturedTriangle(const cv::Mat &texture, const pcl::Vertices &polygon, const pcl::PointCloud<pcl::PointXYZ>::Ptr &meshCloud, const std::vector<Eigen::Vector2f> &uvs, size_t faceIndex);
+    template <typename T>
+    void drawTexturedTriangle(const cv::Mat &texture, const TextureMesh &mesh, Face &face);
 
     /*!
       * \brief Sets the color of a pixel in the photo.
@@ -136,8 +131,8 @@ private:
       * \param t The v texture-coordinate, multiplied with the number of rows in the texture.
       * \param texture The texture from which to get the color.
       **/
-    //template <typename T>
-    //void renderPixel(int row, int col, float u, float v, const cv::Mat &texture);
+    template <typename T>
+    void renderPixel(int row, int col, double u, double v, const cv::Mat &texture);
 
     /*!
       * \brief Calculates the barycentric coordinates of a point in a triangle.
@@ -151,9 +146,9 @@ private:
       * \param l2 The second vertex weight.
       * \param l3 The third vertex weight.
       */
-    //void getBarycentricCoordinates(PointXYZ v1, PointXYZ v2, PointXYZ v3, float x, float y, float &l1, float &l2, float &l3) const;
+    void getBarycentricCoordinates(const PointXYZ &v1, const PointXYZ &v2, const PointXYZ &v3, double x, double y, double &l1, double &l2, double &l3) const;
 
-    //bool isSliverPolygon(PointXYZ v1, PointXYZ v2, PointXYZ v3) const;
+    bool isSliverPolygon(const PointXYZ &v1, const PointXYZ &v2, const PointXYZ &v3) const;
     void loadObjFile(std::string inputFile, TextureMesh &mesh);
 
     Logger          log_;               /**< Logging object. */

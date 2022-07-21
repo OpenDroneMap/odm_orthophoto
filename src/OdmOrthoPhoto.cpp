@@ -346,11 +346,6 @@ void OdmOrthoPhoto::createOrthoPhoto()
 
         TextureMesh mesh;
         loadObjFile(inputFile, mesh);
-
-
-    }} // TODO REMOVE
-
-    /*
         log_ << "Mesh file read.\n\n";
 
         Bounds b = computeBoundsForModel(mesh);
@@ -371,8 +366,8 @@ void OdmOrthoPhoto::createOrthoPhoto()
         }
 
         // The size of the area.
-        float xDiff = bounds.xMax - bounds.xMin;
-        float yDiff = bounds.yMax - bounds.yMin;
+        double xDiff = bounds.xMax - bounds.xMin;
+        double yDiff = bounds.yMax - bounds.yMin;
         log_ << "Model area : " << xDiff*yDiff << "m2\n";
 
         // The resolution necessary to fit the area with the given resolution.
@@ -398,49 +393,29 @@ void OdmOrthoPhoto::createOrthoPhoto()
             log_ << "New ortho photo resolution, width x height : " << width << "x" << height << '\n';
         }
 
-        // Contains the vertices of the mesh.
-        pcl::PointCloud<pcl::PointXYZ>::Ptr meshCloud (new pcl::PointCloud<pcl::PointXYZ>);
-        pcl::fromPCLPointCloud2 (mesh.cloud, *meshCloud);
-
         // Creates a transformation which aligns the area for the ortho photo.
-        Eigen::Transform<float, 3, Eigen::Affine> transform = getROITransform(bounds.xMin, -bounds.yMax);
+        Eigen::Transform<double, 3, Eigen::Affine> transform = getROITransform(bounds.xMin, -bounds.yMax);
         log_ << "Translating and scaling mesh...\n";
 
-        // Move the mesh into position.
-        pcl::transformPointCloud(*meshCloud, *meshCloud, transform);
-        log_ << ".. mesh translated and scaled.\n\n";
-
-        // Flatten texture coordinates.
-        std::vector<Eigen::Vector2f> uvs;
-        uvs.reserve(mesh.tex_coordinates.size());
-        for(size_t t = 0; t < mesh.tex_coordinates.size(); ++t)
-        {
-            uvs.insert(uvs.end(), mesh.tex_coordinates[t].begin(), mesh.tex_coordinates[t].end());
+        for (size_t i = 0; i < mesh.vertices.size(); i++){
+            mesh.vertices[i] = transform * mesh.vertices[i];
         }
+
+        log_ << "Rendering the ortho photo...\n";
 
         // The current material texture
         cv::Mat texture;
 
-        // Used to keep track of the global face index.
-        size_t faceOff = 0;
-
-        log_ << "Rendering the ortho photo...\n";
-
         // Iterate over each part of the mesh (one per material).
-        for(size_t t = 0; t < mesh.tex_materials.size(); ++t)
-        {
-            // The material of the current submesh.
-            pcl::TexMaterial material = mesh.tex_materials[t];
-            texture = cv::imread(material.tex_file, cv::IMREAD_ANYDEPTH | cv::IMREAD_UNCHANGED);
+        for (auto it = mesh.faces.begin(); it != mesh.faces.end(); it++){
+            std::string material = it->first;
+            std::vector<Face> faces = it->second;
 
-            // BGR to RGB when necessary
-            if (texture.channels() == 3){
-                cv::cvtColor(texture, texture, cv::COLOR_BGR2RGB);
-            }
+            texture = mesh.materials[material];
 
             // The first material determines the bit depth
             // Init ortho photo
-            if (t == 0){
+            if (material == mesh.faces.begin()->first){
                 if (primary) textureDepth = texture.depth();
                 else if (textureDepth != texture.depth()){
                     // Try to convert
@@ -488,36 +463,22 @@ void OdmOrthoPhoto::createOrthoPhoto()
                 }
             }
 
-            // Check for missing files.
-            if(texture.empty())
-            {
-                log_ << "Material texture could not be read:\n";
-                log_ << material.tex_file << '\n';
-                log_ << "Could not be read as image, does the file exist?\n";
-                continue; // Skip to next material.
-            }
-
-            // The faces of the current submesh.
-            std::vector<pcl::Vertices> faces = mesh.tex_polygons[t];
-
             // Iterate over each face...
-            for(size_t faceIndex = 0; faceIndex < faces.size(); ++faceIndex)
-            {
-                // The current polygon.
-                pcl::Vertices polygon = faces[faceIndex];
-
+            for(Face &f : faces){
                 // ... and draw it into the ortho photo.
                 if (textureDepth == CV_8U){
-                    drawTexturedTriangle<uint8_t>(texture, polygon, meshCloud, uvs, faceIndex+faceOff);
+                    drawTexturedTriangle<uint8_t>(texture, mesh, f);
                 }else if (textureDepth == CV_16U){
-                    drawTexturedTriangle<uint16_t>(texture, polygon, meshCloud, uvs, faceIndex+faceOff);
+                    drawTexturedTriangle<uint16_t>(texture, mesh, f);
                 }else if (textureDepth == CV_32F){
-                    drawTexturedTriangle<float>(texture, polygon, meshCloud, uvs, faceIndex+faceOff);
+                    drawTexturedTriangle<float>(texture, mesh, f);
                 }
             }
-            faceOff += faces.size();
-            log_ << "Material " << t << " rendered.\n";
+
+            log_ << "Material " << material << " rendered.\n";
+
         }
+
         log_ << "... model rendered\n";
 
         currentBandIndex += texture.channels();
@@ -555,28 +516,22 @@ void OdmOrthoPhoto::createOrthoPhoto()
     log_ << "Orthophoto generation done.\n";
 }
 
-Bounds OdmOrthoPhoto::computeBoundsForModel(const pcl::TextureMesh &mesh)
+Bounds OdmOrthoPhoto::computeBoundsForModel(const TextureMesh &mesh)
 {
-    log_ << "Set boundary to contain entire model.\n";
-
     // The boundary of the model.
     Bounds r;
 
-    r.xMin = std::numeric_limits<float>::infinity();
-    r.xMax = -std::numeric_limits<float>::infinity();
-    r.yMin = std::numeric_limits<float>::infinity();
-    r.yMax = -std::numeric_limits<float>::infinity();
+    r.xMin = std::numeric_limits<double>::infinity();
+    r.xMax = -std::numeric_limits<double>::infinity();
+    r.yMin = std::numeric_limits<double>::infinity();
+    r.yMax = -std::numeric_limits<double>::infinity();
 
-    // Contains the vertices of the mesh.
-    pcl::PointCloud<pcl::PointXYZ>::Ptr meshCloud (new pcl::PointCloud<pcl::PointXYZ>);
-    pcl::fromPCLPointCloud2 (mesh.cloud, *meshCloud);
-
-    for (size_t i = 0; i < meshCloud->points.size(); i++){
-        pcl::PointXYZ v = meshCloud->points[i];
-        r.xMin = std::min(r.xMin, v.x);
-        r.xMax = std::max(r.xMax, v.x);
-        r.yMin = std::min(r.yMin, v.y);
-        r.yMax = std::max(r.yMax, v.y);
+    for (size_t i = 0; i < mesh.vertices.size(); i++){
+        PointXYZ v = mesh.vertices[i];
+        r.xMin = std::min(r.xMin, v[0]);
+        r.xMax = std::max(r.xMax, v[0]);
+        r.yMin = std::min(r.yMin, v[1]);
+        r.yMax = std::max(r.yMax, v[1]);
     }
 
     log_ << "Boundary points:\n";
@@ -589,158 +544,141 @@ Bounds OdmOrthoPhoto::computeBoundsForModel(const pcl::TextureMesh &mesh)
     return r;
 }
 
-Eigen::Transform<float, 3, Eigen::Affine> OdmOrthoPhoto::getROITransform(float xMin, float yMin) const
+Eigen::Transform<double, 3, Eigen::Affine> OdmOrthoPhoto::getROITransform(double xMin, double yMin) const
 {
     // The transform used to move the chosen area into the ortho photo.
-    Eigen::Transform<float, 3, Eigen::Affine> transform;
+    Eigen::Transform<double, 3, Eigen::Affine> transform;
 
     transform(0, 0) = resolution_;     // x Scaling.
-    transform(1, 0) = 0.0f;
-    transform(2, 0) = 0.0f;
-    transform(3, 0) = 0.0f;
+    transform(1, 0) = 0.0;
+    transform(2, 0) = 0.0;
+    transform(3, 0) = 0.0;
 
-    transform(0, 1) = 0.0f;
+    transform(0, 1) = 0.0;
     transform(1, 1) = -resolution_;     // y Scaling, mirrored for easier rendering.
-    transform(2, 1) = 0.0f;
-    transform(3, 1) = 0.0f;
+    transform(2, 1) = 0.0;
+    transform(3, 1) = 0.0;
 
-    transform(0, 2) = 0.0f;
-    transform(1, 2) = 0.0f;
-    transform(2, 2) = 1.0f;
-    transform(3, 2) = 0.0f;
+    transform(0, 2) = 0.0;
+    transform(1, 2) = 0.0;
+    transform(2, 2) = 1.0;
+    transform(3, 2) = 0.0;
 
     transform(0, 3) = -xMin * resolution_;    // x Translation
     transform(1, 3) = -yMin * resolution_;    // y Translation
-    transform(2, 3) = 0.0f;
-    transform(3, 3) = 1.0f;
+    transform(2, 3) = 0.0;
+    transform(3, 3) = 1.0;
 
     return transform;
 }
 
 template <typename T>
-void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vertices &polygon, const pcl::PointCloud<pcl::PointXYZ>::Ptr &meshCloud, const std::vector<Eigen::Vector2f> &uvs, size_t faceIndex)
+void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const TextureMesh &mesh, Face &face)
 {
-    // The index to the vertices of the polygon.
-    size_t v1i = polygon.vertices[0];
-    size_t v2i = polygon.vertices[1];
-    size_t v3i = polygon.vertices[2];
+    PointXYZ v1 = mesh.vertices[face.v1i];
+    PointXYZ v2 = mesh.vertices[face.v2i];
+    PointXYZ v3 = mesh.vertices[face.v3i];
 
-    // The polygon's points.
-    pcl::PointXYZ v1 = meshCloud->points[v1i];
-    pcl::PointXYZ v2 = meshCloud->points[v2i];
-    pcl::PointXYZ v3 = meshCloud->points[v3i];
+    Tex2D v1t = mesh.uvs[face.t1i];
+    Tex2D v2t = mesh.uvs[face.t2i];
+    Tex2D v3t = mesh.uvs[face.t3i];
 
     if(isSliverPolygon(v1, v2, v3))
     {
-        log_ << "Warning: Sliver polygon found at face index " << faceIndex << '\n';
+        log_ << "Warning: Sliver polygon found at (" << face.v1i << ", " << face.v2i << ", " << face.v3i << ")\n";
         return;
     }
 
-    // The face data. Position v*{x,y,z}. Texture coordinate v*{u,v}. * is the vertex number in the polygon.
-    float v1x, v1y, v1z, v1u, v1v;
-    float v2x, v2y, v2z, v2u, v2v;
-    float v3x, v3y, v3z, v3u, v3v;
-
     // Barycentric coordinates of the currently rendered point.
-    float l1, l2, l3;
+    double l1, l2, l3;
 
     // The size of the photo, as float.
-    float fRows, fCols;
-    fRows = static_cast<float>(texture.rows);
-    fCols = static_cast<float>(texture.cols);
-
-    // Get vertex position.
-    v1x = v1.x; v1y = v1.y; v1z = v1.z;
-    v2x = v2.x; v2y = v2.y; v2z = v2.z;
-    v3x = v3.x; v3y = v3.y; v3z = v3.z;
-
-    // Get texture coordinates. 
-    v1u = uvs[3*faceIndex][0]; v1v = uvs[3*faceIndex][1];
-    v2u = uvs[3*faceIndex+1][0]; v2v = uvs[3*faceIndex+1][1];
-    v3u = uvs[3*faceIndex+2][0]; v3v = uvs[3*faceIndex+2][1];
+    double fRows, fCols;
+    fRows = static_cast<double>(texture.rows);
+    fCols = static_cast<double>(texture.cols);
 
     // Check bounding box overlap.
-    int xMin = static_cast<int>(std::min(std::min(v1x, v2x), v3x));
+    int xMin = static_cast<int>(std::min(std::min(v1[0], v2[0]), v3[0]));
     if(xMin > width)
     {
         return; // Completely outside to the right.
     }
-    int xMax = static_cast<int>(std::max(std::max(v1x, v2x), v3x));
+    int xMax = static_cast<int>(std::max(std::max(v1[0], v2[0]), v3[0]));
     if(xMax < 0)
     {
         return; // Completely outside to the left.
     }
-    int yMin = static_cast<int>(std::min(std::min(v1y, v2y), v3y));
+    int yMin = static_cast<int>(std::min(std::min(v1[1], v2[1]), v3[1]));
     if(yMin > height)
     {
         return; // Completely outside to the top.
     }
-    int yMax = static_cast<int>(std::max(std::max(v1y, v2y), v3y));
+    int yMax = static_cast<int>(std::max(std::max(v1[1], v2[1]), v3[1]));
     if(yMax < 0)
     {
         return; // Completely outside to the bottom.
     }
 
     // Top point row and column positions
-    float topR, topC;
+    double topR, topC;
     // Middle point row and column positions
-    float midR, midC;
+    double midR, midC;
     // Bottom point row and column positions
-    float botR, botC;
+    double botR, botC;
 
     // Find top, middle and bottom points.
-    if(v1y < v2y)
+    if(v1[1] < v2[1])
     {
-        if(v1y < v3y)
+        if(v1[1] < v3[1])
         {
-            if(v2y < v3y)
+            if(v2[1] < v3[1])
             {
                 // 1 -> 2 -> 3
-                topR = v1y; topC = v1x;
-                midR = v2y; midC = v2x;
-                botR = v3y; botC = v3x;
+                topR = v1[1]; topC = v1[0];
+                midR = v2[1]; midC = v2[0];
+                botR = v3[1]; botC = v3[0];
             }
             else
             {
                 // 1 -> 3 -> 2
-                topR = v1y; topC = v1x;
-                midR = v3y; midC = v3x;
-                botR = v2y; botC = v2x;
+                topR = v1[1]; topC = v1[0];
+                midR = v3[1]; midC = v3[0];
+                botR = v2[1]; botC = v2[0];
             }
         }
         else
         {
             // 3 -> 1 -> 2
-            topR = v3y; topC = v3x;
-            midR = v1y; midC = v1x;
-            botR = v2y; botC = v2x;
+            topR = v3[1]; topC = v3[0];
+            midR = v1[1]; midC = v1[0];
+            botR = v2[1]; botC = v2[0];
         }        
     }
     else // v2y <= v1y
     {
-        if(v2y < v3y)
+        if(v2[1] < v3[1])
         {
-            if(v1y < v3y)
+            if(v1[1] < v3[1])
             {
                 // 2 -> 1 -> 3
-                topR = v2y; topC = v2x;
-                midR = v1y; midC = v1x;
-                botR = v3y; botC = v3x;
+                topR = v2[1]; topC = v2[0];
+                midR = v1[1]; midC = v1[0];
+                botR = v3[1]; botC = v3[0];
             }
             else
             {
                 // 2 -> 3 -> 1
-                topR = v2y; topC = v2x;
-                midR = v3y; midC = v3x;
-                botR = v1y; botC = v1x;
+                topR = v2[1]; topC = v2[0];
+                midR = v3[1]; midC = v3[0];
+                botR = v1[1]; botC = v1[0];
             }
         }
         else
         {
             // 3 -> 2 -> 1
-            topR = v3y; topC = v3x;
-            midR = v2y; midC = v2x;
-            botR = v1y; botC = v1x;
+            topR = v3[1]; topC = v3[0];
+            midR = v2[1]; midC = v2[0];
+            botR = v1[1]; botC = v1[0];
         }
     }
 
@@ -754,53 +692,48 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vert
     // dr : DeltaRow, step value per row.
 
     // The step along column for every step along r. Top to middle.
-    float ctmdr;
+    double ctmdr;
     // The step along column for every step along r. Top to bottom.
-    float ctbdr;
+    double ctbdr;
     // The step along column for every step along r. Middle to bottom.
-    float cmbdr;
+    double cmbdr;
 
     ctbdr = (botC-topC)/(botR-topR);
 
     // The current column position, from top to middle.
-    float ctm = topC;
+    double ctm = topC;
     // The current column position, from top to bottom.
-    float ctb = topC;
+    double ctb = topC;
 
     // Check for vertical line between middle and top.
-    if(FLT_EPSILON < midR-topR)
+    if(DBL_EPSILON < midR-topR)
     {
         ctmdr = (midC-topC)/(midR-topR);
 
         // The first pixel row for the bottom part of the triangle.
-        int rqStart = std::max(static_cast<int>(std::floor(topR+0.5f)), 0);
+        int rqStart = std::max(static_cast<int>(std::floor(topR+0.5)), 0);
         // The last pixel row for the top part of the triangle.
-        int rqEnd = std::min(static_cast<int>(std::floor(midR+0.5f)), height);
+        int rqEnd = std::min(static_cast<int>(std::floor(midR+0.5)), height);
 
         // Traverse along row from top to middle.
         for(int rq = rqStart; rq < rqEnd; ++rq)
         {
             // Set the current column positions.
-            ctm = topC + ctmdr*(static_cast<float>(rq)+0.5f-topR);
-            ctb = topC + ctbdr*(static_cast<float>(rq)+0.5f-topR);
+            ctm = topC + ctmdr*(static_cast<double>(rq)+0.5-topR);
+            ctb = topC + ctbdr*(static_cast<double>(rq)+0.5-topR);
 
             // The first pixel column for the current row.
-            int cqStart = std::max(static_cast<int>(std::floor(0.5f+std::min(ctm, ctb))), 0);
+            int cqStart = std::max(static_cast<int>(std::floor(0.5+std::min(ctm, ctb))), 0);
             // The last pixel column for the current row.
-            int cqEnd = std::min(static_cast<int>(std::floor(0.5f+std::max(ctm, ctb))), width);
+            int cqEnd = std::min(static_cast<int>(std::floor(0.5+std::max(ctm, ctb))), width);
 
             for(int cq = cqStart; cq < cqEnd; ++cq)
             {
                 // Get barycentric coordinates for the current point.
-                getBarycentricCoordinates(v1, v2, v3, static_cast<float>(cq)+0.5f, static_cast<float>(rq)+0.5f, l1, l2, l3);
-
-                if(0.f > l1 || 0.f > l2 || 0.f > l3)
-                {
-                    //continue;
-                }
+                getBarycentricCoordinates(v1, v2, v3, static_cast<double>(cq)+0.5, static_cast<double>(rq)+0.5, l1, l2, l3);
                 
                 // The z value for the point.
-                float z = v1z*l1+v2z*l2+v3z*l3;
+                float z = static_cast<float>(v1[2]*l1+v2[2]*l2+v3[2]*l3);
 
                 // Check depth
                 float depthValue = depth_.at<float>(rq, cq);
@@ -811,11 +744,11 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vert
                 }
 
                 // The uv values of the point.
-                float u, v;
-                u = v1u*l1+v2u*l2+v3u*l3;
-                v = v1v*l1+v2v*l2+v3v*l3;
+                double u, v;
+                u = v1t[0]*l1+v2t[0]*l2+v3t[0]*l3;
+                v = v1t[1]*l1+v2t[1]*l2+v3t[1]*l3;
                 
-                renderPixel<T>(rq, cq, u*fCols, (1.0f-v)*fRows, texture);
+                renderPixel<T>(rq, cq, u*fCols, (1.0-v)*fRows, texture);
                 
                 // Update depth buffer.
                 depth_.at<float>(rq, cq) = z;
@@ -823,42 +756,37 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vert
         }
     }
 
-    if(FLT_EPSILON < botR-midR)
+    if(DBL_EPSILON < botR-midR)
     {
         cmbdr = (botC-midC)/(botR-midR);
 
         // The current column position, from middle to bottom.
-        float cmb = midC;
+        double cmb = midC;
 
         // The first pixel row for the bottom part of the triangle.
-        int rqStart = std::max(static_cast<int>(std::floor(midR+0.5f)), 0);
+        int rqStart = std::max(static_cast<int>(std::floor(midR+0.5)), 0);
         // The last pixel row for the bottom part of the triangle.
-        int rqEnd = std::min(static_cast<int>(std::floor(botR+0.5f)), height);
+        int rqEnd = std::min(static_cast<int>(std::floor(botR+0.5)), height);
 
         // Traverse along row from middle to bottom.
         for(int rq = rqStart; rq < rqEnd; ++rq)
         {
             // Set the current column positions.
-            ctb = topC + ctbdr*(static_cast<float>(rq)+0.5f-topR);
-            cmb = midC + cmbdr*(static_cast<float>(rq)+0.5f-midR);
+            ctb = topC + ctbdr*(static_cast<double>(rq)+0.5-topR);
+            cmb = midC + cmbdr*(static_cast<double>(rq)+0.5-midR);
 
             // The first pixel column for the current row.
-            int cqStart = std::max(static_cast<int>(std::floor(0.5f+std::min(cmb, ctb))), 0);
+            int cqStart = std::max(static_cast<int>(std::floor(0.5+std::min(cmb, ctb))), 0);
             // The last pixel column for the current row.
-            int cqEnd = std::min(static_cast<int>(std::floor(0.5f+std::max(cmb, ctb))), width);
+            int cqEnd = std::min(static_cast<int>(std::floor(0.5+std::max(cmb, ctb))), width);
 
             for(int cq = cqStart; cq < cqEnd; ++cq)
             {
                 // Get barycentric coordinates for the current point.
-                getBarycentricCoordinates(v1, v2, v3, static_cast<float>(cq)+0.5f, static_cast<float>(rq)+0.5f, l1, l2, l3);
-
-                if(0.f > l1 || 0.f > l2 || 0.f > l3)
-                {
-                    //continue;
-                }
+                getBarycentricCoordinates(v1, v2, v3, static_cast<double>(cq)+0.5, static_cast<double>(rq)+0.5, l1, l2, l3);
 
                 // The z value for the point.
-                float z = v1z*l1+v2z*l2+v3z*l3;
+                float z = static_cast<float>(v1[2]*l1+v2[2]*l2+v3[2]*l3);
 
                 // Check depth
                 float depthValue = depth_.at<float>(rq, cq);
@@ -869,11 +797,11 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vert
                 }
 
                 // The uv values of the point.
-                float u, v;
-                u = v1u*l1+v2u*l2+v3u*l3;
-                v = v1v*l1+v2v*l2+v3v*l3;
+                double u, v;
+                u = v1t[0]*l1+v2t[0]*l2+v3t[0]*l3;
+                v = v1t[1]*l1+v2t[1]*l2+v3t[1]*l3;
 
-                renderPixel<T>(rq, cq, u*fCols, (1.0f-v)*fRows, texture);
+                renderPixel<T>(rq, cq, u*fCols, (1.0-v)*fRows, texture);
 
                 // Update depth buffer.
                 depth_.at<float>(rq, cq) = z;
@@ -883,21 +811,21 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const pcl::Vert
 }
 
 template <typename T>
-void OdmOrthoPhoto::renderPixel(int row, int col, float s, float t, const cv::Mat &texture)
+void OdmOrthoPhoto::renderPixel(int row, int col, double s, double t, const cv::Mat &texture)
 {
     // The offset of the texture coordinate from its pixel positions.
-    float leftF, topF;
+    double leftF, topF;
     // The position of the top left pixel.
     int left, top;
     // The distance to the left and right pixel from the texture coordinate.
-    float dl, dt;
+    double dl, dt;
     // The distance to the top and bottom pixel from the texture coordinate.
-    float dr, db;
+    double dr, db;
     
-    dl = modff(s, &leftF);
-    dr = 1.0f - dl;
-    dt = modff(t, &topF);
-    db = 1.0f - dt;
+    dl = modf(s, &leftF);
+    dr = 1.0 - dl;
+    dt = modf(t, &topF);
+    db = 1.0 - dt;
     
     left = static_cast<int>(leftF);
     top = static_cast<int>(topF);
@@ -908,17 +836,17 @@ void OdmOrthoPhoto::renderPixel(int row, int col, float s, float t, const cv::Ma
     int numChannels = texture.channels();
 
     for (int i = 0; i < numChannels; i++){
-        float value = 0.0f;
+        double value = 0.0;
 
         T tl = data[(top) * texture.cols * numChannels + (left) * numChannels + i];
         T tr = data[(top) * texture.cols * numChannels + (left + 1) * numChannels + i];
         T bl = data[(top + 1) * texture.cols * numChannels + (left) * numChannels + i];
         T br = data[(top + 1) * texture.cols * numChannels + (left + 1) * numChannels + i];
 
-        value += static_cast<float>(tl) * dr * db;
-        value += static_cast<float>(tr) * dl * db;
-        value += static_cast<float>(bl) * dr * dt;
-        value += static_cast<float>(br) * dl * dt;
+        value += static_cast<double>(tl) * dr * db;
+        value += static_cast<double>(tr) * dl * db;
+        value += static_cast<double>(bl) * dr * dt;
+        value += static_cast<double>(br) * dl * dt;
 
         static_cast<T *>(bands[currentBandIndex + i])[idx] = static_cast<T>(value);
     }
@@ -929,39 +857,33 @@ void OdmOrthoPhoto::renderPixel(int row, int col, float s, float t, const cv::Ma
     static_cast<T *>(alphaBand)[idx] += static_cast<T>(numChannels);
 }
 
-void OdmOrthoPhoto::getBarycentricCoordinates(pcl::PointXYZ v1, pcl::PointXYZ v2, pcl::PointXYZ v3, float x, float y, float &l1, float &l2, float &l3) const
+void OdmOrthoPhoto::getBarycentricCoordinates(const PointXYZ &v1, const PointXYZ &v2, const PointXYZ &v3, double x, double y, double &l1, double &l2, double &l3) const
 {
     // Diff along y.
-    float y2y3 = v2.y-v3.y;
-    float y1y3 = v1.y-v3.y;
-    float y3y1 = v3.y-v1.y;
-    float yy3  =  y  -v3.y;
+    double y2y3 = v2[1]-v3[1];
+    double y1y3 = v1[1]-v3[1];
+    double y3y1 = v3[1]-v1[1];
+    double yy3  =  y  -v3[1];
     
     // Diff along x.
-    float x3x2 = v3.x-v2.x;
-    float x1x3 = v1.x-v3.x;
-    float xx3  =  x  -v3.x;
+    double x3x2 = v3[0]-v2[0];
+    double x1x3 = v1[0]-v3[0];
+    double xx3  =  x  -v3[0];
     
     // Normalization factor.
-    float norm = (y2y3*x1x3 + x3x2*y1y3);
+    double norm = (y2y3*x1x3 + x3x2*y1y3);
     
     l1 = (y2y3*(xx3) + x3x2*(yy3)) / norm;
     l2 = (y3y1*(xx3) + x1x3*(yy3)) / norm;
-    l3 = 1 - l1 - l2;
+    l3 = 1.0 - l1 - l2;
 }
 
-bool OdmOrthoPhoto::isSliverPolygon(pcl::PointXYZ v1, pcl::PointXYZ v2, pcl::PointXYZ v3) const
-{
-    // Calculations are made using doubles, to minize rounding errors.
-    Eigen::Vector3d a = Eigen::Vector3d(static_cast<double>(v1.x), static_cast<double>(v1.y), static_cast<double>(v1.z));
-    Eigen::Vector3d b = Eigen::Vector3d(static_cast<double>(v2.x), static_cast<double>(v2.y), static_cast<double>(v2.z));
-    Eigen::Vector3d c = Eigen::Vector3d(static_cast<double>(v3.x), static_cast<double>(v3.y), static_cast<double>(v3.z));
-    Eigen::Vector3d dummyVec = (a-b).cross(c-b);
+const float eps2 = std::numeric_limits<float>::epsilon() * std::numeric_limits<float>::epsilon();
 
-    // Area smaller than, or equal to, floating-point epsilon.
-    return std::numeric_limits<float>::epsilon() >= static_cast<float>(std::sqrt(dummyVec.dot(dummyVec))/2.0);
+bool OdmOrthoPhoto::isSliverPolygon(const PointXYZ &v1, const PointXYZ &v2, const PointXYZ &v3) const{
+    Eigen::Vector3d dummyVec = (v1-v2).cross(v3-v2);
+    return eps2 >= static_cast<float>(dummyVec.dot(dummyVec) / 2.0);
 }
-*/
 
 // Totally not compatible with all OBJ files, just a subset of those
 // that we expect as output from ODM
@@ -1015,13 +937,17 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
                                     log_ << "Loading " << mapFname << "\n";
 
                                     cv::Mat texture = cv::imread(matPath.string(), cv::IMREAD_ANYDEPTH | cv::IMREAD_UNCHANGED);
+                                    if(!texture.empty()){
+                                        // BGR to RGB when necessary
+                                        if (texture.channels() == 3){
+                                            cv::cvtColor(texture, texture, cv::COLOR_BGR2RGB);
+                                        }
 
-                                    // BGR to RGB when necessary
-                                    if (texture.channels() == 3){
-                                        cv::cvtColor(texture, texture, cv::COLOR_BGR2RGB);
+                                        mesh.materials[currentMaterial] = texture;
+                                    }else{
+                                        log_ << "Material texture could not be read: " << mapFname << "\n";
                                     }
 
-                                    mesh.materials[currentMaterial] = texture;
                                 }
                             }
                         }
@@ -1049,27 +975,27 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
             auto tokens = split(line, " ");
             if (tokens.size() >= 4){
                 auto parts = split(tokens[1], "/");
-                if (parts.size() >= 2){
+                if (parts.size() >= 2 && !parts[1].empty()){
                     int av = std::stoi(parts[0]);
                     int at = std::stoi(parts[1]);
 
                     parts = split(tokens[2], "/");
-                    if (parts.size() >= 2){
+                    if (parts.size() >= 2 && !parts[1].empty()){
                         int bv = std::stoi(parts[0]);
                         int bt = std::stoi(parts[1]);
 
                         parts = split(tokens[3], "/");
-                        if (parts.size() >= 2){
+                        if (parts.size() >= 2 && !parts[1].empty()){
                             int cv = std::stoi(parts[0]);
                             int ct = std::stoi(parts[1]);
 
                             Face f;
-                            f.v1 = mesh.vertices[av - 1];
-                            f.v2 = mesh.vertices[bv - 1];
-                            f.v3 = mesh.vertices[cv - 1];
-                            f.t1 = mesh.uvs[at - 1];
-                            f.t2 = mesh.uvs[bt - 1];
-                            f.t3 = mesh.uvs[ct - 1];
+                            f.v1i = av - 1;
+                            f.v2i = bv - 1;
+                            f.v3i = cv - 1;
+                            f.t1i = at - 1;
+                            f.t2i = bt - 1;
+                            f.t3i = ct - 1;
 
                             mesh.faces[currentFaceMat].push_back(f);
                         }
