@@ -13,7 +13,7 @@ OdmOrthoPhoto::OdmOrthoPhoto()
     logFile_    = "log.txt";
     outputCornerFile_ = "";
     bandsOrder = "red,green,blue";
-
+    outputDepthIdx = -1;
     resolution_ = 0.0f;
 
     alphaBand = nullptr;
@@ -158,6 +158,15 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
             }
             outputCornerFile_ = std::string(argv[argIndex]);
         }
+        else if(argument == "-outputDepthIdx")
+        {
+            argIndex++;
+            if (argIndex >= argc)
+            {
+                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            }
+            outputDepthIdx = std::atoi(argv[argIndex]);
+        }
         else
         {
             printHelp();
@@ -168,10 +177,13 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
 
     std::stringstream ss(bandsOrder);
     std::string item;
+    bool foundRgb = false;
+
     while(std::getline(ss, item, ',')){
         std::string itemL = item;
         // To lower case
         std::transform(itemL.begin(), itemL.end(), itemL.begin(), [](unsigned char c){ return std::tolower(c); });
+        bool rgb = false;
 
         if (itemL == "red" || itemL == "r"){
             colorInterps.push_back(GCI_RedBand);
@@ -179,10 +191,22 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
             colorInterps.push_back(GCI_GreenBand);
         }else if (itemL == "blue" || itemL == "b"){
             colorInterps.push_back(GCI_BlueBand);
+        }else if (itemL == "rgb" || itemL == "redgreenblue"){
+            rgb = foundRgb = true;
+            colorInterps.push_back(GCI_RedBand);
+            colorInterps.push_back(GCI_GreenBand);
+            colorInterps.push_back(GCI_BlueBand);
         }else{
             colorInterps.push_back(GCI_GrayIndex);
         }
-        bandDescriptions.push_back(item);
+
+        if (rgb){
+            bandDescriptions.push_back("Red");
+            bandDescriptions.push_back("Green");
+            bandDescriptions.push_back("Blue");
+        }else{
+            bandDescriptions.push_back(item);
+        }
     }
 }
 
@@ -341,6 +365,23 @@ void OdmOrthoPhoto::createOrthoPhoto()
     bool primary = true;
     Bounds bounds;
 
+    if (outputDepthIdx >= 0 && inputFiles.size() > static_cast<size_t>(outputDepthIdx)){
+        log_ << "Setting bit depth from input model " << inputFiles[outputDepthIdx] << "\n";
+        
+        std::string inputFile = inputFiles[outputDepthIdx];
+        log_ << "Reading mesh file... " << inputFile << "\n";
+        TextureMesh mesh;
+        loadObjFile(inputFile, mesh);
+        log_ << "Mesh file read.\n\n";
+
+        if (mesh.materials_idx.size() > 0){
+            textureDepth = mesh.materials[mesh.materials_idx[0]].depth();
+            log_ << "Texture depth set to " << textureDepth << "\n";
+        }else{
+            log_ << "No materials, strange...\n";
+        }
+    }
+
     for (auto &inputFile : inputFiles){
         log_ << "Reading mesh file... " << inputFile << "\n";
 
@@ -413,10 +454,10 @@ void OdmOrthoPhoto::createOrthoPhoto()
             std::vector<Face> faces = mesh.faces[material];
             texture = mesh.materials[material];
 
-            // The first material determines the bit depth
-            // Init ortho photo
             if (material == mesh.materials_idx[0]){
-                if (primary) textureDepth = texture.depth();
+                // The first material determines the bit depth
+                // Unless it's already set by outputDepthIdx
+                if (textureDepth == -1) textureDepth = texture.depth();
                 else if (textureDepth != texture.depth()){
                     // Try to convert
                     if (textureDepth == CV_8U){

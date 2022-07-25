@@ -158,6 +158,7 @@ private:
     std::string     outputCornerFile_;  /**< Path to the output corner file. */
     std::string     logFile_;           /**< Path to the log file. */
     std::string     bandsOrder;
+    int outputDepthIdx;
 
     float           resolution_;        /**< The number of pixels per meter in the ortho photo. */
 
