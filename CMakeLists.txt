@@ -12,8 +12,10 @@ endif()
 
 # Add compiler options.
 if (NOT WIN32)
-add_definitions(-Wall -Wextra)
-set(STDPPFS_LIBRARY stdc++fs)
+      add_definitions(-Wall -Wextra)
+      if (UNIX AND NOT APPLE)
+            set(STDPPFS_LIBRARY stdc++fs)
+      endif()
 endif()
 
 find_package(GDAL REQUIRED)
