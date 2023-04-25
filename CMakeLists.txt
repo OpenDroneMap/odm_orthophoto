@@ -27,7 +27,7 @@ include_directories(${GDAL_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIR})
 find_package(OpenCV HINTS "${OPENCV_DIR}" REQUIRED)
 
 # Only link with required opencv modules.
-set(OpenCV_LIBS opencv_core opencv_imgproc opencv_highgui)
+set(OpenCV_LIBS opencv_core opencv_imgproc opencv_highgui opencv_photo)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 

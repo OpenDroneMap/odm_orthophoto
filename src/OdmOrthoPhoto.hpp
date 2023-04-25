@@ -11,6 +11,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/core/core.hpp>
+#include <opencv2/photo.hpp>
 
 // GDAL
 #include "gdal_priv.h"
@@ -151,6 +152,8 @@ private:
     bool isSliverPolygon(const PointXYZ &v1, const PointXYZ &v2, const PointXYZ &v3) const;
     void loadObjFile(std::string inputFile, TextureMesh &mesh);
 
+    template <typename T>
+    void inpaint(float threshold);
     Logger          log_;               /**< Logging object. */
 
     std::vector<std::string> inputFiles;
@@ -169,6 +172,7 @@ private:
     int currentBandIndex;
 
     cv::Mat         depth_;             /**< The depth of the ortho photo as an OpenCV matrix, CV_32F. */
+
 };
 
 class OdmOrthoPhotoException : public std::exception

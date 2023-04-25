@@ -528,6 +528,21 @@ void OdmOrthoPhoto::createOrthoPhoto()
     }
 
     log_ << '\n';
+    log_ << "Inpainting\n";
+
+    float threshold = 1.0;
+    if (textureDepth == CV_8U){
+        inpaint<uint8_t>(threshold);
+    }else if (textureDepth == CV_16U){
+        inpaint<uint16_t>(threshold);
+    }else if (textureDepth == CV_32F){
+        inpaint<float>(threshold);
+    }else{
+        std::cerr << "Unsupported bit depth value: " << textureDepth;
+        exit(1);
+    }
+
+    log_ << '\n';
     log_ << "Writing ortho photo to " << outputFile_ << "\n";
 
     if (textureDepth == CV_8U){
@@ -1057,3 +1072,71 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
 
     fin.close();
 }
+
+template <typename T>
+void OdmOrthoPhoto::inpaint(float threshold) {
+    cv::Mat dgrad = cv::Mat::zeros(height, width, CV_32F);
+    cv::Mat inpaintMask = cv::Mat::zeros(height, width, CV_8U);
+    cv::Mat output;
+
+    int rows = dgrad.rows;
+    int cols = dgrad.cols;
+
+    // Compute the gradient along the x-axis
+    for (int i = 0; i < rows; i++) {
+        for (int j = 1; j < cols - 1; j++) {
+            dgrad.at<float>(i, j) = (depth_.at<float>(i, j+1) - depth_.at<float>(i, j-1)) / 2.0;
+        }
+        dgrad.at<float>(i, 0) = depth_.at<float>(i, 1) - depth_.at<float>(i, 0);
+        dgrad.at<float>(i, cols-1) = depth_.at<float>(i, cols-1) - depth_.at<float>(i, cols-2);
+    }
+
+    // Compute the gradient along the y-axis
+    for (int j = 0; j < cols; j++) {
+        for (int i = 1; i < rows - 1; i++) {
+            dgrad.at<float>(i, j) = fabs(dgrad.at<float>(i, j)  + (depth_.at<float>(i+1, j) - depth_.at<float>(i-1, j)) / 2.0);
+        }
+        dgrad.at<float>(0, j) = fabs(dgrad.at<float>(0, j) + depth_.at<float>(1, j) - depth_.at<float>(0, j));
+        dgrad.at<float>(rows-1, j) = fabs(dgrad.at<float>(rows-1, j) + depth_.at<float>(rows-1, j) - depth_.at<float>(rows-2, j));
+    }
+
+    // Threshold
+    for (int j = 0; j < cols; j++) {
+        for (int i = 0; i < rows; i++) {
+            inpaintMask.at<uint8_t>(i, j) = dgrad.at<float>(i, j) > threshold ? 255 : 0;
+        }
+    }
+
+    cv::imwrite("/data/drone/brighton2/mask.tif", inpaintMask);
+
+    // Inpaint each band
+    for (size_t bandIdx = 0; bandIdx < bands.size(); bandIdx++){
+        log_ << "Inpainting band " << bandIdx << "\n";
+
+        dgrad.setTo(0);
+
+        T *data = reinterpret_cast<T *>(bands[bandIdx]);
+
+        for(int i = 0; i < rows; i++) {
+            for (int j = 0; j < cols; j++) {
+                size_t idx = static_cast<size_t>(i) * static_cast<size_t>(width) + static_cast<size_t>(j);
+                dgrad.at<float>(i, j) = data[idx];
+            }
+        }
+
+        cv::inpaint(dgrad, inpaintMask, output, 1, cv::INPAINT_NS); // cv::INPAINT_TELEA
+
+        for(int i = 0; i < rows; i++) {
+            for (int j = 0; j < cols; j++) {
+                size_t idx = static_cast<size_t>(i) * static_cast<size_t>(width) + static_cast<size_t>(j);
+                data[idx] = static_cast<T>(output.at<float>(i, j));
+            }
+        }
+    }
+
+
+
+    //cv::Mat inpaintMask;
+//    cv::inpaint()
+}
+
