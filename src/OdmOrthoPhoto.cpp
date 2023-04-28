@@ -54,9 +54,9 @@ int OdmOrthoPhoto::run(int argc, char *argv[])
         log_.print(logFile_);
         return EXIT_FAILURE;
     }
-    
+
     log_.print(logFile_);
-    
+
     return EXIT_SUCCESS;
 }
 
@@ -64,25 +64,25 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
 {
     logFile_ = std::string(argv[0]) + "_log.txt";
     log_ << logFile_ << "\n\n";
-    
+
     // If no arguments were passed, print help.
     if (argc == 1)
     {
         printHelp();
     }
-    
+
     log_ << "Arguments given\n";
     for(int argIndex = 1; argIndex < argc; ++argIndex)
     {
         log_ << argv[argIndex] << '\n';
     }
-    
+
     log_ << '\n';
     for(int argIndex = 1; argIndex < argc; ++argIndex)
     {
         // The argument to be parsed.
         std::string argument = std::string(argv[argIndex]);
-        
+
         if(argument == "-help")
         {
             printHelp();
@@ -379,7 +379,7 @@ void OdmOrthoPhoto::createOrthoPhoto()
 
     if (outputDepthIdx >= 0 && inputFiles.size() > static_cast<size_t>(outputDepthIdx)){
         log_ << "Setting bit depth from input model " << inputFiles[outputDepthIdx] << "\n";
-        
+
         std::string inputFile = inputFiles[outputDepthIdx];
         log_ << "Reading mesh file... " << inputFile << "\n";
         TextureMesh mesh;
@@ -721,7 +721,7 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const TextureMe
             topR = v3[1]; topC = v3[0];
             midR = v1[1]; midC = v1[0];
             botR = v2[1]; botC = v2[0];
-        }        
+        }
     }
     else // v2y <= v1y
     {
@@ -800,7 +800,7 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const TextureMe
             {
                 // Get barycentric coordinates for the current point.
                 getBarycentricCoordinates(v1, v2, v3, static_cast<double>(cq)+0.5, static_cast<double>(rq)+0.5, l1, l2, l3);
-                
+
                 // The z value for the point.
                 float z = static_cast<float>(v1[2]*l1+v2[2]*l2+v3[2]*l3);
 
@@ -816,9 +816,9 @@ void OdmOrthoPhoto::drawTexturedTriangle(const cv::Mat &texture, const TextureMe
                 double u, v;
                 u = v1t[0]*l1+v2t[0]*l2+v3t[0]*l3;
                 v = v1t[1]*l1+v2t[1]*l2+v3t[1]*l3;
-                
+
                 renderPixel<T>(rq, cq, u*fCols, (1.0-v)*fRows, texture);
-                
+
                 // Update depth buffer.
                 depth_.at<float>(rq, cq) = z;
             }
@@ -890,15 +890,15 @@ void OdmOrthoPhoto::renderPixel(int row, int col, double s, double t, const cv::
     double dl, dt;
     // The distance to the top and bottom pixel from the texture coordinate.
     double dr, db;
-    
+
     dl = modf(s, &leftF);
     dr = 1.0 - dl;
     dt = modf(t, &topF);
     db = 1.0 - dt;
-    
+
     left = static_cast<int>(leftF);
     top = static_cast<int>(topF);
-    
+
     // The interpolated color values.
     size_t idx = static_cast<size_t>(row) * static_cast<size_t>(width) + static_cast<size_t>(col);
     T *data = reinterpret_cast<T *>(texture.data); // Faster access
@@ -933,15 +933,15 @@ void OdmOrthoPhoto::getBarycentricCoordinates(const PointXYZ &v1, const PointXYZ
     double y1y3 = v1[1]-v3[1];
     double y3y1 = v3[1]-v1[1];
     double yy3  =  y  -v3[1];
-    
+
     // Diff along x.
     double x3x2 = v3[0]-v2[0];
     double x1x3 = v1[0]-v3[0];
     double xx3  =  x  -v3[0];
-    
+
     // Normalization factor.
     double norm = (y2y3*x1x3 + x3x2*y1y3);
-    
+
     l1 = (y2y3*(xx3) + x3x2*(yy3)) / norm;
     l2 = (y3y1*(xx3) + x1x3*(yy3)) / norm;
     l3 = 1.0 - l1 - l2;
@@ -1089,21 +1089,24 @@ template <typename T>
 void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
     if (bands.size() < 3) return;
 
-    const int blockSizeX = 2048;
-    const int blockSizeY = 2048;
+    const int blockSizeX = 1024;
+    const int blockSizeY = 1024;
     const int numBlockX = std::max(1, static_cast<int>(std::ceil(static_cast<float>(width - blockSizeX + 1) / static_cast<float>(blockSizeX))));
     const int numBlockY = std::max(1, static_cast<int>(std::ceil(static_cast<float>(height - blockSizeY + 1) / static_cast<float>(blockSizeY))));
+    log_ << "Edge inpainting\n";
 
     #pragma omp parallel for collapse(2) shared(depth_)
     for (int blockY = 0; blockY < numBlockY; blockY++){
         for (int blockX = 0; blockX < numBlockX; blockX++){
             int startY = blockSizeY * blockY;
             int endY = std::min(startY + blockSizeY, height);
+            if (blockY == numBlockY - 1) endY += height - endY;
             int startX = blockSizeX * blockX;
             int endX = std::min(startX + blockSizeX, width);
+            if (blockX == numBlockX - 1) endX += width - endX;
 
             #pragma omp critical
-            log_ << "Edge inpainting block [(" << startX << ", " << endX << "), (" << startY << ", " << endY << ")]\n";
+            log_ << "Block [(" << startX << ", " << endX << "), (" << startY << ", " << endY << ")]\n";
 
             int w = endX - startX;
             int h = endY - startY;
@@ -1162,7 +1165,7 @@ void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
                 }
             }
 
-            cv::inpaint(input, inpaintMask, output, 1, cv::INPAINT_TELEA); // cv::INPAINT_TELEA cv::INPAINT_NS
+            cv::inpaint(input, inpaintMask, output, 5, cv::INPAINT_TELEA); // cv::INPAINT_TELEA cv::INPAINT_NS
 
             for (size_t bandIdx = 0; bandIdx < 3; bandIdx++){
                 T *data = reinterpret_cast<T *>(bands[bandIdx]);
@@ -1171,8 +1174,10 @@ void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
                     id = i + startY;
                     for (int j = 0; j < cols; j++) {
                         jd = j + startX;
-                        size_t idx = static_cast<size_t>(id) * static_cast<size_t>(width) + static_cast<size_t>(jd);
-                        data[idx] = static_cast<T>(output.ptr<T>(i, j)[bandIdx]);
+                        if (inpaintMask.at<uint8_t>(i, j) == 255){
+                            size_t idx = static_cast<size_t>(id) * static_cast<size_t>(width) + static_cast<size_t>(jd);
+                            data[idx] = static_cast<T>(output.ptr<T>(i, j)[bandIdx]);
+                        }
                     }
                 }
             }
