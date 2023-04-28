@@ -153,7 +153,7 @@ private:
     void loadObjFile(std::string inputFile, TextureMesh &mesh);
 
     template <typename T>
-    void inpaint(float threshold);
+    void inpaint(float threshold, int CV_TYPE);
     Logger          log_;               /**< Logging object. */
 
     std::vector<std::string> inputFiles;
@@ -161,6 +161,7 @@ private:
     std::string     outputCornerFile_;  /**< Path to the output corner file. */
     std::string     logFile_;           /**< Path to the log file. */
     std::string     bandsOrder;
+    float inpaintThreshold;
     int outputDepthIdx;
 
     float           resolution_;        /**< The number of pixels per meter in the ortho photo. */

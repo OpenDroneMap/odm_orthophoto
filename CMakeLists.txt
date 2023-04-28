@@ -20,6 +20,7 @@ endif()
 
 find_package(GDAL REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(OpenMP REQUIRED)
 
 include_directories(${GDAL_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIR})
 
@@ -37,6 +38,6 @@ aux_source_directory("./src" SRC_LIST)
 # Add exectuteable
 add_executable(${PROJECT_NAME} ${SRC_LIST})
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD 17)
-target_link_libraries(odm_orthophoto ${OpenCV_LIBS} ${GDAL_LIBRARY} ${STDPPFS_LIBRARY} )
+target_link_libraries(odm_orthophoto ${OpenCV_LIBS} ${GDAL_LIBRARY} OpenMP::OpenMP_CXX ${STDPPFS_LIBRARY} )
 
 install(TARGETS odm_orthophoto RUNTIME DESTINATION bin)

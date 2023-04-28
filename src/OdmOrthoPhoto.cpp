@@ -15,6 +15,7 @@ OdmOrthoPhoto::OdmOrthoPhoto()
     bandsOrder = "red,green,blue";
     outputDepthIdx = -1;
     resolution_ = 0.0f;
+    inpaintThreshold = 0.0f;
 
     alphaBand = nullptr;
     currentBandIndex = 0;
@@ -166,6 +167,17 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
                 throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             }
             outputDepthIdx = std::atoi(argv[argIndex]);
+        }
+        else if(argument == "-inpaintThreshold")
+        {
+            ++argIndex;
+            if (argIndex >= argc)
+            {
+                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            }
+            std::stringstream ss(argv[argIndex]);
+            ss >> inpaintThreshold;
+            log_ << "Inpaint threshold was set to: " << inpaintThreshold << "\n";
         }
         else
         {
@@ -528,18 +540,18 @@ void OdmOrthoPhoto::createOrthoPhoto()
     }
 
     log_ << '\n';
-    log_ << "Inpainting\n";
 
-    float threshold = 1.0;
-    if (textureDepth == CV_8U){
-        inpaint<uint8_t>(threshold);
-    }else if (textureDepth == CV_16U){
-        inpaint<uint16_t>(threshold);
-    }else if (textureDepth == CV_32F){
-        inpaint<float>(threshold);
-    }else{
-        std::cerr << "Unsupported bit depth value: " << textureDepth;
-        exit(1);
+    if (inpaintThreshold > 0 && bands.size() >= 3){
+        if (textureDepth == CV_8U){
+            inpaint<uint8_t>(inpaintThreshold, textureDepth);
+        }else if (textureDepth == CV_16U){
+            inpaint<uint16_t>(inpaintThreshold, textureDepth);
+        }else if (textureDepth == CV_32F){
+            inpaint<float>(inpaintThreshold, textureDepth);
+        }else{
+            std::cerr << "Unsupported bit depth value: " << textureDepth;
+            exit(1);
+        }
     }
 
     log_ << '\n';
@@ -1074,69 +1086,97 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
 }
 
 template <typename T>
-void OdmOrthoPhoto::inpaint(float threshold) {
-    cv::Mat dgrad = cv::Mat::zeros(height, width, CV_32F);
-    cv::Mat inpaintMask = cv::Mat::zeros(height, width, CV_8U);
-    cv::Mat output;
+void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
+    if (bands.size() < 3) return;
 
-    int rows = dgrad.rows;
-    int cols = dgrad.cols;
+    const int blockSizeX = 2048;
+    const int blockSizeY = 2048;
+    const int numBlockX = std::max(1, static_cast<int>(std::ceil(static_cast<float>(width - blockSizeX + 1) / static_cast<float>(blockSizeX))));
+    const int numBlockY = std::max(1, static_cast<int>(std::ceil(static_cast<float>(height - blockSizeY + 1) / static_cast<float>(blockSizeY))));
 
-    // Compute the gradient along the x-axis
-    for (int i = 0; i < rows; i++) {
-        for (int j = 1; j < cols - 1; j++) {
-            dgrad.at<float>(i, j) = (depth_.at<float>(i, j+1) - depth_.at<float>(i, j-1)) / 2.0;
-        }
-        dgrad.at<float>(i, 0) = depth_.at<float>(i, 1) - depth_.at<float>(i, 0);
-        dgrad.at<float>(i, cols-1) = depth_.at<float>(i, cols-1) - depth_.at<float>(i, cols-2);
-    }
+    #pragma omp parallel for collapse(2) shared(depth_)
+    for (int blockY = 0; blockY < numBlockY; blockY++){
+        for (int blockX = 0; blockX < numBlockX; blockX++){
+            int startY = blockSizeY * blockY;
+            int endY = std::min(startY + blockSizeY, height);
+            int startX = blockSizeX * blockX;
+            int endX = std::min(startX + blockSizeX, width);
 
-    // Compute the gradient along the y-axis
-    for (int j = 0; j < cols; j++) {
-        for (int i = 1; i < rows - 1; i++) {
-            dgrad.at<float>(i, j) = fabs(dgrad.at<float>(i, j)  + (depth_.at<float>(i+1, j) - depth_.at<float>(i-1, j)) / 2.0);
-        }
-        dgrad.at<float>(0, j) = fabs(dgrad.at<float>(0, j) + depth_.at<float>(1, j) - depth_.at<float>(0, j));
-        dgrad.at<float>(rows-1, j) = fabs(dgrad.at<float>(rows-1, j) + depth_.at<float>(rows-1, j) - depth_.at<float>(rows-2, j));
-    }
+            #pragma omp critical
+            log_ << "Edge inpainting block [(" << startX << ", " << endX << "), (" << startY << ", " << endY << ")]\n";
 
-    // Threshold
-    for (int j = 0; j < cols; j++) {
-        for (int i = 0; i < rows; i++) {
-            inpaintMask.at<uint8_t>(i, j) = dgrad.at<float>(i, j) > threshold ? 255 : 0;
-        }
-    }
+            int w = endX - startX;
+            int h = endY - startY;
 
-    cv::imwrite("/data/drone/brighton2/mask.tif", inpaintMask);
+            cv::Mat depthGradient = cv::Mat::zeros(h, w, CV_32F);
+            cv::Mat inpaintMask = cv::Mat::zeros(h, w, CV_8U);
+            cv::Mat input = cv::Mat::zeros(h, w, CV_MAKETYPE(CV_TYPE, 3));
+            cv::Mat output;
 
-    // Inpaint each band
-    for (size_t bandIdx = 0; bandIdx < bands.size(); bandIdx++){
-        log_ << "Inpainting band " << bandIdx << "\n";
+            int rows = depthGradient.rows;
+            int cols = depthGradient.cols;
 
-        dgrad.setTo(0);
+            int id, jd;
+            // Compute the gradient along the x-axis
+            for (int i = 0; i < rows; i++) {
+                id = i + startY;
 
-        T *data = reinterpret_cast<T *>(bands[bandIdx]);
+                for (int j = 1; j < cols - 1; j++) {
+                    jd = j + startX;
+                    depthGradient.at<float>(i, j) = (depth_.at<float>(id, jd+1) - depth_.at<float>(id, jd-1)) / 2.0;
+                }
+                depthGradient.at<float>(i, 0) = depth_.at<float>(id, 1 + startX) - depth_.at<float>(id, startX);
+                depthGradient.at<float>(i, cols-1) = depth_.at<float>(id, cols-1+startX) - depth_.at<float>(id, cols-2+startX);
+            }
 
-        for(int i = 0; i < rows; i++) {
+            // Compute the gradient along the y-axis
             for (int j = 0; j < cols; j++) {
-                size_t idx = static_cast<size_t>(i) * static_cast<size_t>(width) + static_cast<size_t>(j);
-                dgrad.at<float>(i, j) = data[idx];
+                jd = j + startX;
+
+                for (int i = 1; i < rows - 1; i++) {
+                    id = i + startY;
+                    depthGradient.at<float>(i, j) = fabs(depthGradient.at<float>(i, j)  + (depth_.at<float>(id+1, jd) - depth_.at<float>(id-1, jd)) / 2.0);
+                }
+                depthGradient.at<float>(0, j) = fabs(depthGradient.at<float>(0, j) + depth_.at<float>(1+startY, jd) - depth_.at<float>(startY, jd));
+                depthGradient.at<float>(rows-1, j) = fabs(depthGradient.at<float>(rows-1, j) + depth_.at<float>(rows-1+startY, jd) - depth_.at<float>(rows-2+startY, jd));
+            }
+
+            // Threshold
+            for (int j = 0; j < cols; j++) {
+                for (int i = 0; i < rows; i++) {
+                    inpaintMask.at<uint8_t>(i, j) = depthGradient.at<float>(i, j) > threshold ? 255 : 0;
+                }
+            }
+
+            // Inpaint first three bands
+            for (size_t bandIdx = 0; bandIdx < 3; bandIdx++){
+                T *data = reinterpret_cast<T *>(bands[bandIdx]);
+
+                for(int i = 0; i < rows; i++) {
+                    id = i + startY;
+                    for (int j = 0; j < cols; j++) {
+                        jd = j + startX;
+                        size_t idx = static_cast<size_t>(id) * static_cast<size_t>(width) + static_cast<size_t>(jd);
+                        input.ptr<T>(i, j)[bandIdx] = data[idx];
+                    }
+                }
+            }
+
+            cv::inpaint(input, inpaintMask, output, 1, cv::INPAINT_TELEA); // cv::INPAINT_TELEA cv::INPAINT_NS
+
+            for (size_t bandIdx = 0; bandIdx < 3; bandIdx++){
+                T *data = reinterpret_cast<T *>(bands[bandIdx]);
+
+                for(int i = 0; i < rows; i++) {
+                    id = i + startY;
+                    for (int j = 0; j < cols; j++) {
+                        jd = j + startX;
+                        size_t idx = static_cast<size_t>(id) * static_cast<size_t>(width) + static_cast<size_t>(jd);
+                        data[idx] = static_cast<T>(output.ptr<T>(i, j)[bandIdx]);
+                    }
+                }
             }
         }
-
-        cv::inpaint(dgrad, inpaintMask, output, 1, cv::INPAINT_NS); // cv::INPAINT_TELEA
-
-        for(int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
-                size_t idx = static_cast<size_t>(i) * static_cast<size_t>(width) + static_cast<size_t>(j);
-                data[idx] = static_cast<T>(output.at<float>(i, j));
-            }
-        }
     }
-
-
-
-    //cv::Mat inpaintMask;
-//    cv::inpaint()
 }
 
