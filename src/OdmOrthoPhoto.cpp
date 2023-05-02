@@ -1095,7 +1095,7 @@ void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
     const int numBlockY = std::max(1, static_cast<int>(std::ceil(static_cast<float>(height - blockSizeY + 1) / static_cast<float>(blockSizeY))));
     log_ << "Edge inpainting\n";
 
-    #pragma omp parallel for collapse(2) shared(depth_)
+    #pragma omp parallel for collapse(2)
     for (int blockY = 0; blockY < numBlockY; blockY++){
         for (int blockX = 0; blockX < numBlockX; blockX++){
             int startY = blockSizeY * blockY;
