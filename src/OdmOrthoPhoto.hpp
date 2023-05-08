@@ -164,6 +164,12 @@ private:
     float inpaintThreshold;
     int outputDepthIdx;
 
+    std::vector<std::pair<std::string, std::string> > coOptions;
+    std::vector<std::pair<std::string, std::string> > gdalConfigs;
+    std::string aSrs;
+    double utm_east_offset;
+    double utm_north_offset;
+
     float           resolution_;        /**< The number of pixels per meter in the ortho photo. */
 
     std::vector<void *>    bands;

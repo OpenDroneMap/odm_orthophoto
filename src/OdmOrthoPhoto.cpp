@@ -7,6 +7,21 @@
 
 #include "OdmOrthoPhoto.hpp"
 
+static inline std::vector<std::string> split(const std::string &s, const std::string &delimiter){
+    size_t posStart = 0, posEnd, delimLen = delimiter.length();
+    std::string token;
+    std::vector<std::string> res;
+
+    while ((posEnd = s.find(delimiter, posStart)) != std::string::npos) {
+        token = s.substr(posStart, posEnd - posStart);
+        posStart = posEnd + delimLen;
+        res.push_back(token);
+    }
+
+    res.push_back(s.substr(posStart));
+    return res;
+}
+
 OdmOrthoPhoto::OdmOrthoPhoto()
     :log_(false){
     outputFile_ = "ortho.tif";
@@ -16,6 +31,9 @@ OdmOrthoPhoto::OdmOrthoPhoto()
     outputDepthIdx = -1;
     resolution_ = 0.0f;
     inpaintThreshold = 0.0f;
+    aSrs = "";
+    utm_east_offset = 0;
+    utm_north_offset = 0;
 
     alphaBand = nullptr;
     currentBandIndex = 0;
@@ -83,104 +101,76 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
         // The argument to be parsed.
         std::string argument = std::string(argv[argIndex]);
 
-        if(argument == "-help")
-        {
+        if(argument == "-help"){
             printHelp();
-        }
-        else if(argument == "-resolution")
-        {
-            ++argIndex;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-resolution"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             std::stringstream ss(argv[argIndex]);
             ss >> resolution_;
             log_ << "Resolution count was set to: " << resolution_ << "pixels/meter\n";
-        }
-        else if(argument == "-verbose")
-        {
+        }else if(argument == "-verbose"){
             log_.setIsPrintingInCout(true);
-        }
-        else if (argument == "-logFile")
-        {
-            ++argIndex;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Missing argument for '" + argument + "'.");
-            }
+        }else if (argument == "-logFile"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Missing argument for '" + argument + "'.");
             logFile_ = std::string(argv[argIndex]);
             std::ofstream testFile(logFile_.c_str());
-            if (!testFile.is_open())
-            {
+            if (!testFile.is_open()){
                 throw OdmOrthoPhotoException("Argument '" + argument + "' has a bad value.");
             }
             log_ << "Log file path was set to: " << logFile_ << "\n";
-        }
-        else if(argument == "-inputFiles")
-        {
-            argIndex++;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-inputFiles"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             std::string inputFilesArg = std::string(argv[argIndex]);
             std::stringstream ss(inputFilesArg);
             std::string item;
             while(std::getline(ss, item, ',')){
                 inputFiles.push_back(item);
             }
-        }
-        else if(argument == "-bands")
-        {
-            argIndex++;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-bands"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             bandsOrder = std::string(argv[argIndex]);
-        }
-        else if(argument == "-outputFile")
-        {
-            argIndex++;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-outputFile"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             outputFile_ = std::string(argv[argIndex]);
             log_ << "Writing output to: " << outputFile_ << "\n";
-        }
-        else if(argument == "-outputCornerFile")
-        {
-            argIndex++;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-outputCornerFile"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             outputCornerFile_ = std::string(argv[argIndex]);
-        }
-        else if(argument == "-outputDepthIdx")
-        {
-            argIndex++;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-outputDepthIdx"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             outputDepthIdx = std::atoi(argv[argIndex]);
-        }
-        else if(argument == "-inpaintThreshold")
-        {
-            ++argIndex;
-            if (argIndex >= argc)
-            {
-                throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
-            }
+        }else if(argument == "-inpaintThreshold"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             std::stringstream ss(argv[argIndex]);
             ss >> inpaintThreshold;
             log_ << "Inpaint threshold was set to: " << inpaintThreshold << "\n";
-        }
-        else
-        {
+        }else if(argument == "-a_srs"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            aSrs = std::string(argv[argIndex]);
+        }else if(argument == "-utm_east_offset"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            std::stringstream ss(argv[argIndex]);
+            ss >> utm_east_offset;
+        }else if(argument == "-utm_nort_offset"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            std::stringstream ss(argv[argIndex]);
+            ss >> utm_north_offset;
+        }else if(argument == "--config"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            std::string key = std::string(argv[argIndex]);
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            std::string value = std::string(argv[argIndex]);
+            gdalConfigs.push_back(std::make_pair(key, value));
+        }else if(argument == "-co"){
+            if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
+            std::string str = std::string(argv[argIndex]);
+            std::vector<std::string> kv = split(str, "=");
+            if (kv.size() == 2){
+                coOptions.push_back(std::make_pair(kv[0], kv[1]));
+            }else{
+                std::cerr << "Invalid -co " << str << std::endl;
+            }
+        }else{
             printHelp();
             throw OdmOrthoPhotoException("Unrecognised argument '" + argument + "'");
         }
@@ -264,9 +254,41 @@ void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType)
         std::cerr << "Cannot initialize GeoTIFF driver. Check your GDAL installation." << std::endl;
         exit(1);
     }
+
+    for (auto &opt : gdalConfigs){
+        if (opt.first == "GDAL_CACHEMAX"){
+            GDALSetCacheMax64(std::stod(opt.second));
+            log_ << "Set GDAL_CACHEMAX to " << opt.second << "\n";
+        }
+    }
+
     char **papszOptions = NULL;
+    for (auto &opt : coOptions){
+        CSLSetNameValue(papszOptions, opt.first.c_str(), opt.second.c_str());
+        log_ << "Set " << opt.first << "=" << opt.second << "\n";
+    }
+
     GDALDatasetH hDstDS = GDALCreate( hDriver, filename.c_str(), width, height,
                                       static_cast<int>(bands.size() + 1), dataType, papszOptions );
+    if (!aSrs.empty()){
+        OGRSpatialReferenceH hSrs = OSRNewSpatialReference(nullptr);
+
+        // Note: only proj definitions are allowed here
+        if (OSRImportFromProj4(hSrs, aSrs.c_str()) != OGRERR_NONE) throw OdmOrthoPhotoException("Cannot import spatial reference system " + aSrs + ". Is PROJ available?");
+        if (GDALSetSpatialRef(hDstDS, hSrs) != CE_None) throw OdmOrthoPhotoException("Cannot set CRS");
+        OSRDestroySpatialReference(hSrs);
+
+        double geoTransform[6] = {};
+        geoTransform[0] = bounds.xMin + utm_east_offset;
+        geoTransform[1] = (bounds.xMax - bounds.xMin) / static_cast<double>(width);
+        geoTransform[2] = 0.0;
+        geoTransform[3] = bounds.yMin + utm_north_offset;
+        geoTransform[4] = 0.0;
+        geoTransform[5] = (bounds.yMax - bounds.yMin) / static_cast<double>(height);
+
+        if (GDALSetGeoTransform(hDstDS, geoTransform) != CE_NONE) throw OdmOrthoPhotoException("Cannot set geotransform");
+    }
+
     GDALRasterBandH hBand;
 
     // Bands
