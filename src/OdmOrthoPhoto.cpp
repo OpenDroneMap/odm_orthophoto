@@ -7,21 +7,6 @@
 
 #include "OdmOrthoPhoto.hpp"
 
-static inline std::vector<std::string> split(const std::string &s, const std::string &delimiter){
-    size_t posStart = 0, posEnd, delimLen = delimiter.length();
-    std::string token;
-    std::vector<std::string> res;
-
-    while ((posEnd = s.find(delimiter, posStart)) != std::string::npos) {
-        token = s.substr(posStart, posEnd - posStart);
-        posStart = posEnd + delimLen;
-        res.push_back(token);
-    }
-
-    res.push_back(s.substr(posStart));
-    return res;
-}
-
 OdmOrthoPhoto::OdmOrthoPhoto()
     :log_(false){
     outputFile_ = "ortho.tif";
@@ -151,7 +136,7 @@ void OdmOrthoPhoto::parseArguments(int argc, char *argv[])
             if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             std::stringstream ss(argv[argIndex]);
             ss >> utm_east_offset;
-        }else if(argument == "-utm_nort_offset"){
+        }else if(argument == "-utm_north_offset"){
             if (++argIndex >= argc) throw OdmOrthoPhotoException("Argument '" + argument + "' expects 1 more input following it, but no more inputs were provided.");
             std::stringstream ss(argv[argIndex]);
             ss >> utm_north_offset;
@@ -257,14 +242,17 @@ void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType)
 
     for (auto &opt : gdalConfigs){
         if (opt.first == "GDAL_CACHEMAX"){
-            GDALSetCacheMax64(std::stod(opt.second));
-            log_ << "Set GDAL_CACHEMAX to " << opt.second << "\n";
+            GIntBig nBytes;
+            std::istringstream ss(opt.second);
+            ss >> nBytes;
+            GDALSetCacheMax64(nBytes);
+            log_ << "Set GDAL_CACHEMAX to " << nBytes << "\n";
         }
     }
 
     char **papszOptions = NULL;
     for (auto &opt : coOptions){
-        CSLSetNameValue(papszOptions, opt.first.c_str(), opt.second.c_str());
+        papszOptions = CSLSetNameValue(papszOptions, opt.first.c_str(), opt.second.c_str());
         log_ << "Set " << opt.first << "=" << opt.second << "\n";
     }
 
@@ -282,11 +270,11 @@ void OdmOrthoPhoto::saveTIFF(const std::string &filename, GDALDataType dataType)
         geoTransform[0] = bounds.xMin + utm_east_offset;
         geoTransform[1] = (bounds.xMax - bounds.xMin) / static_cast<double>(width);
         geoTransform[2] = 0.0;
-        geoTransform[3] = bounds.yMin + utm_north_offset;
+        geoTransform[3] = bounds.yMax + utm_north_offset;
         geoTransform[4] = 0.0;
-        geoTransform[5] = (bounds.yMax - bounds.yMin) / static_cast<double>(height);
+        geoTransform[5] = (bounds.yMin - bounds.yMax) / static_cast<double>(height);
 
-        if (GDALSetGeoTransform(hDstDS, geoTransform) != CE_NONE) throw OdmOrthoPhotoException("Cannot set geotransform");
+        if (GDALSetGeoTransform(hDstDS, geoTransform) != CE_None) throw OdmOrthoPhotoException("Cannot set geotransform");
     }
 
     GDALRasterBandH hBand;
@@ -397,7 +385,6 @@ void OdmOrthoPhoto::createOrthoPhoto()
 
     int textureDepth = -1;
     bool primary = true;
-    Bounds bounds;
 
     if (outputDepthIdx >= 0 && inputFiles.size() > static_cast<size_t>(outputDepthIdx)){
         log_ << "Setting bit depth from input model " << inputFiles[outputDepthIdx] << "\n";

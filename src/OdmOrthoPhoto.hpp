@@ -87,6 +87,8 @@ public:
 
 private:
     int width, height;
+    Bounds bounds;
+
     void parseArguments(int argc, char* argv[]);
     void printHelp();
 
