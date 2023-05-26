@@ -1096,7 +1096,10 @@ void OdmOrthoPhoto::loadObjFile(std::string inputFile, TextureMesh &mesh)
 
 template <typename T>
 void OdmOrthoPhoto::inpaint(float threshold, int CV_TYPE) {
-    if (bands.size() < 3) return;
+    // * 8-bit, 16-bit unsigned or 32-bit float 1-channel 
+    // * 8-bit 3-channel input/output images are supported
+    // We only inpaint 3-channel 8-bit for now
+    if (bands.size() != 3 || CV_TYPE != CV_8U) return;
 
     const int blockSizeX = 1024;
     const int blockSizeY = 1024;
